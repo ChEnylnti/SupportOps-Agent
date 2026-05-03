@@ -438,6 +438,8 @@ def generate_customer_reply(context: dict) -> str:
 
 - 对话/推理模型 API；
 - Embedding API；
+- LangGraph；
+- LangChain；
 - ChromaDB 向量数据库；
 - 文档切分与向量化；
 - Top-K 语义检索；
@@ -602,6 +604,88 @@ settings           系统配置
 知识库上传 -> 文档向量化 -> RAG 检索 -> Agent 判断 -> 自动回复/创建工单 -> 人工确认 -> Trace 展示 -> 报告导出
 ```
 
+### 11.13 生产级后端落地原则
+
+第一版后端采用 **production-style modular monolith（生产级模块化单体）**。也就是说，代码部署形态先保持一个 FastAPI 后端服务，但内部按照真实线上系统的边界拆分模块，避免写成只适合演示的脚本式项目。
+
+Agent 编排从第一版开始引入 `LangGraph / LangChain`：
+
+- FastAPI 负责 HTTP API、鉴权、参数校验、错误处理；
+- LangGraph 负责 Agent 状态图、多步骤执行、条件分支、trace 和 human-in-the-loop；
+- LangChain 负责模型调用、工具封装、Prompt 模板和外部集成；
+- RAG 检索结果、工单工具和风险审批都作为 LangGraph 节点或 Tool 接入。
+
+选择模块化单体的原因：
+
+- 适合个人项目和 MVP 快速推进；
+- 保留清晰的业务边界，后续可以平滑拆成微服务；
+- 比过早引入微服务、Kubernetes 和复杂消息队列更容易一次跑通；
+- 更符合真实团队从 0 到 1 建设 AI 产品后端的常见路径。
+
+后端分层约定：
+
+```text
+API Router       只负责路由、请求参数、响应结构
+Schema           定义请求体、响应体和校验规则
+Service          承载业务逻辑，例如文档、工单、审批、报告
+Agent            使用 LangGraph 承载意图识别、RAG、风险判断、回复生成等 AI 编排
+Tool             封装可被 Agent 调用的业务动作
+Repository       封装数据库读写，避免业务层直接写 SQL
+Model            定义数据库表结构
+Core             配置、日志、错误处理、安全、通用响应
+DB               数据库连接、Session、迁移入口
+Tests            单元测试、API 测试、集成测试
+```
+
+核心工程要求：
+
+- 配置通过 `.env` 管理，禁止把 API Key、数据库密码写死在代码里；
+- 所有数据库结构变化必须通过 Alembic migration 管理；
+- 所有 API 返回统一响应结构；
+- 所有异常走统一错误处理，避免把内部堆栈直接暴露给前端；
+- 每次 Agent 执行需要记录 trace，方便定位工具调用和模型输出问题；
+- 上传文件必须限制类型、大小和存储路径；
+- 后端启动后必须能检查 PostgreSQL、Redis、Chroma 的连接状态；
+- 第一版就保留测试目录，至少覆盖健康检查、核心 service 和主要 API。
+
+### 11.14 本地开发环境准备
+
+本项目第一版建议使用 macOS / Linux 开发环境，核心依赖如下：
+
+```text
+Git              拉取代码、提交代码、同步 GitHub
+Python 3.11+     运行 FastAPI 后端
+Node.js 20+      运行 Vue3 前端
+Docker           启动 PostgreSQL、Redis、Chroma 等基础服务
+Docker Compose   编排多个本地服务
+```
+
+本地检查命令：
+
+```bash
+git --version
+python3 --version
+node --version
+npm --version
+docker --version
+docker compose version
+```
+
+这些命令只做环境检查，不会修改项目文件：
+
+- `git --version`：确认 Git 是否可用；
+- `python3 --version`：确认 Python 版本是否满足后端要求；
+- `node --version`：确认 Node.js 是否满足前端要求；
+- `npm --version`：确认 Node 包管理器是否可用；
+- `docker --version`：确认 Docker 客户端是否安装；
+- `docker compose version`：确认 Docker Compose 是否可用。
+
+推荐的第一阶段开发节奏：
+
+```text
+先验证本机工具链 -> 创建后端骨架 -> 创建虚拟环境 -> 安装依赖 -> 跑通健康检查 -> 再接数据库和缓存
+```
+
 ## 12. AI API 准备方案
 
 ### 12.1 是否一定需要 AI API
@@ -698,74 +782,104 @@ MVP 阶段可以这样控制成本：
 
 ## 13. MVP 开发计划
 
-第一版按照企业级工程形态开发，默认使用 Docker Compose 编排 `backend`、`frontend`、`postgres`、`redis`、`chroma` 五个服务。
+第一版按照生产级模块化单体开发，默认使用 Docker Compose 编排 `backend`、`frontend`、`postgres`、`redis`、`chroma` 五个服务。开发顺序优先保证后端工程基础稳定，再逐步接入 RAG、Agent 和前端页面。
 
-### Day 1：Docker 化项目初始化
+### Phase 0：本地环境准备
 
-- 创建项目目录结构；
+- 检查 Git、Python、Node.js、Docker 和 Docker Compose；
+- 确认 GitHub 仓库可以正常 `pull` / `push`；
+- 确认 Docker Desktop 已启动；
+- 确认本机 8000、5173、5432、6379、8001 端口没有冲突；
+- 创建 `.env.example`，只提交示例配置，不提交真实密钥；
+- 编写 `README.md` 的本地启动说明。
+
+### Phase 1：后端工程骨架
+
+- 创建 `backend/` 目录；
+- 创建 Python 虚拟环境；
+- 编写 `backend/requirements.txt`；
+- 创建 FastAPI 应用入口；
+- 安装并接入 LangGraph / LangChain；
+- 建立 `core`、`api`、`schemas`、`services`、`repositories`、`models`、`db`、`agents`、`tools` 目录；
+- 实现统一响应结构；
+- 实现统一异常处理；
+- 实现结构化日志基础配置；
+- 实现 `GET /` 和 `GET /api/health`；
+- 实现最小 LangGraph workflow，并接入 `POST /api/chat`；
+- 将 LangGraph workflow 拆为输入规范化、意图识别、RAG 检索、风险判断、审批、建单、回复生成等节点；
+- 使用 `pytest` 覆盖健康检查接口。
+
+### Phase 2：基础设施接入
+
 - 创建 `docker-compose.yml`；
-- 创建 `.env.example`；
-- 编写 `backend/Dockerfile`；
-- 编写 `frontend/Dockerfile`；
 - 启动 PostgreSQL、Redis、ChromaDB；
-- 实现 FastAPI 健康检查接口；
-- 验证后端容器可以访问 PostgreSQL、Redis 和 ChromaDB。
-
-### Day 2：数据库模型与基础接口
-
-- 配置 SQLAlchemy；
-- 配置 Alembic；
-- 建立 PostgreSQL 数据表；
-- 实现 `documents`、`tickets`、`conversations` 基础模型；
-- 实现健康检查接口；
+- 配置 SQLAlchemy 数据库连接；
+- 配置 Alembic 数据库迁移；
 - 实现数据库连接检查接口；
-- 实现 Redis 连接检查接口。
+- 实现 Redis 连接检查接口；
+- 实现 Chroma 连接检查逻辑；
+- 保证后端启动时可以读取 `.env` 配置。
 
-### Day 3：知识库上传与 Redis 任务状态
+### Phase 3：业务数据模型与基础 API
+
+- 建立 `documents`、`document_chunks` 表；
+- 建立 `tickets`、`ticket_comments` 表；
+- 建立 `conversations`、`messages` 表；
+- 建立 `approvals`、`trace_steps`、`reports` 表；
+- 实现文档、工单、会话的 repository；
+- 实现工单创建、列表、详情、状态更新 API；
+- 为核心 service 编写单元测试。
+
+### Phase 4：知识库上传与解析
 
 - 实现 Markdown/TXT/PDF/CSV 上传；
+- 校验上传文件类型和大小；
 - 保存文档 metadata 到 PostgreSQL；
+- 使用后台任务解析文档；
+- 按标题、段落或 CSV 行切分 chunk；
+- 保存 chunk metadata；
 - 使用 Redis 记录文档处理任务状态；
-- 使用 FastAPI BackgroundTasks 后台解析文档；
-- 实现任务状态查询接口；
-- 建立知识库管理页面。
+- 实现任务状态查询接口。
 
-### Day 4：Embedding 与 Chroma RAG 检索
+### Phase 5：Embedding 与 Chroma RAG 检索
 
-- 调用 embedding API；
+- 封装 embedding service；
 - 将文档 chunk 写入 ChromaDB；
 - 将 chunk metadata 写入 PostgreSQL；
-- 实现 RAG 检索接口；
+- 实现 `POST /api/documents/search`；
 - 使用 Redis 缓存高频检索结果；
-- 前端展示检索片段、来源和相似度。
+- 返回检索片段、来源文件、相似度和 metadata；
+- 添加无 API Key 时的降级或 mock 模式。
 
-### Day 5：Agent Chat 工作流
+### Phase 6：Agent Chat 工作流
 
 - 实现 Intent Agent；
 - 实现 RAG Agent；
 - 实现 Reply Agent；
 - `/api/chat` 支持意图识别、知识库检索和带来源回复；
-- 将 Agent 执行步骤写入 PostgreSQL；
+- 将 Agent 执行步骤写入 `trace_steps`；
 - 将当前执行状态写入 Redis；
-- 前端展示 Agent Trace。
+- 限制 Agent 最大步骤数，避免无限循环；
+- 为 chat workflow 编写集成测试。
 
-### Day 6：工单工具调用与人工确认
+### Phase 7：工单工具调用与人工确认
 
-- 实现工单数据库表；
 - 实现 `create_ticket`、`assign_ticket`、`query_ticket_status` 工具；
 - Agent 根据问题自动创建工单；
 - 实现 Risk Agent；
 - 高风险操作进入人工确认；
-- 实现审批页面和审批日志。
+- 实现审批通过和拒绝接口；
+- 记录审批日志和工具调用 trace。
 
-### Day 7：报告导出与项目包装
+### Phase 8：前端、报告与项目包装
 
-- 生成 Markdown 处理报告；
-- 支持导出报告；
+- 创建 Vue3 + Vite 前端；
 - 完成 Chat、知识库、工单、审批、Trace 页面；
-- 编写 README；
-- 准备 FAQ/SOP/历史工单演示数据；
-- 准备一键启动演示脚本。
+- 实现 Markdown 处理报告生成；
+- 支持报告导出；
+- 完善 README、接口说明和演示脚本；
+- 准备一键启动演示流程；
+- 补充简历描述和项目截图。
 
 ## 14. 演示数据准备
 
@@ -807,6 +921,33 @@ T003,申请管理员权限,账号与权限,P1,IT支持组,处理中,等待直属
 supportops-agent/
   backend/
     app/
+      core/
+        config.py
+        logging.py
+        responses.py
+        exceptions.py
+        security.py
+      api/
+        deps.py
+        router.py
+        routes/
+          health.py
+          chat.py
+          documents.py
+          tickets.py
+          approvals.py
+          traces.py
+          reports.py
+          settings.py
+      schemas/
+        common.py
+        health.py
+        chat.py
+        document.py
+        ticket.py
+        approval.py
+        trace.py
+        report.py
       agents/
         intent_agent.py
         rag_agent.py
@@ -819,34 +960,44 @@ supportops-agent/
         approval_tools.py
         report_tools.py
       services/
+        llm_service.py
         embedding_service.py
         vector_store_service.py
+        document_service.py
         ticket_service.py
         redis_service.py
         trace_service.py
+        approval_service.py
+        report_service.py
+      repositories/
+        document_repository.py
+        ticket_repository.py
+        conversation_repository.py
+        approval_repository.py
+        trace_repository.py
+        report_repository.py
       models/
+        base.py
         ticket.py
         document.py
         conversation.py
         approval.py
         trace.py
         report.py
-      api/
-        health.py
-        chat.py
-        documents.py
-        tickets.py
-        approvals.py
-        traces.py
-        reports.py
       db/
         session.py
         base.py
+        migrations.py
       main.py
-      config.py
+    tests/
+      test_health.py
+      test_tickets.py
+      test_documents.py
     alembic/
+    alembic.ini
     Dockerfile
     requirements.txt
+    requirements-dev.txt
   frontend/
     src/
       views/
@@ -872,6 +1023,7 @@ supportops-agent/
     demo_tickets.csv
   docker-compose.yml
   .env.example
+  .gitignore
   README.md
 ```
 
@@ -893,7 +1045,3 @@ supportops-agent/
 - 相比普通知识库问答，多了工单创建、任务分派、风险判断和人工确认；
 - 具有明确业务价值：降低重复客服成本、提升响应速度、沉淀知识资产；
 - 数据和业务流程可以自造，适合个人快速开发和面试演示。
-
-
-
-
