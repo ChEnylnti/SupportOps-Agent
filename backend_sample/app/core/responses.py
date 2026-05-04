@@ -1,14 +1,19 @@
 from typing import Any
-# Any 表示任意类型。因为 data 可能是字典、列表、字符串，也可能是 None。
+
 
 def success_response(data: Any = None, message: str = "success") -> dict[str, Any]:
+    """Return the project's standard success envelope."""
+
     return {
         "code": 200,
         "message": message,
-        "data": data,
+        "data": data if data is not None else {},
     }
 
-def error_response(message: str, code: int = 400, data: Any = None) ->dict[str, Any]:
+
+def error_response(message: str, code: int = 400, data: Any = None) -> dict[str, Any]:
+    """Return the project's standard error envelope."""
+
     return {
         "code": code,
         "message": message,
