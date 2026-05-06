@@ -25,3 +25,19 @@ def test_database_health():
     assert body["code"] ==200
     assert body["message"] == "success"
     assert body["data"]["database"] == "ok"
+
+def test_redis_health():
+    response = client.get("/api/health/redis")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["code"] == 200
+    assert body["message"] == "success"
+    assert body["data"]["redis"] == "ok"
+
+def test_redis_health():
+    response = client.get("/api/health/chroma")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["code"] == 200
+    assert body["message"] == "success"
+    assert body["data"]["chroma"] == "ok"
