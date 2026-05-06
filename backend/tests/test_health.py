@@ -16,3 +16,12 @@ def test_health():
     assert body["code"] == 200
     assert body["message"] == "success"
     assert body["data"]["status"] == "ok"
+
+def test_database_health():
+    response = client.get("/api/health/db")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["code"] ==200
+    assert body["message"] == "success"
+    assert body["data"]["database"] == "ok"
