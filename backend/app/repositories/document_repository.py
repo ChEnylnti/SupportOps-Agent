@@ -22,7 +22,7 @@ def create_document(db: Session, document_in: DocumentCreate) -> Document:
 
     return document
 
-def get_document(db: Session, document_id:int) -> Document:
+def get_document(db: Session, document_id:int) -> Document | None:
     statement = select(Document).where(Document.id == document_id)
     # db.scalar(...) 返回第一条结果，如果没有就返回 None。
     return db.scalar(statement)
